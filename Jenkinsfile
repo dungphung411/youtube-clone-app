@@ -19,7 +19,7 @@ pipeline{
         }
         stage('Checkout from Git'){
             steps{
-                git branch: 'main', url: 'https://github.com/Aj7Ay/Youtube-clone-app.git'
+              git branch: 'main', changelog: false, poll: false, url: 'https://github.com/dungphung411/youtube-clone-app.git'
             }
         }
         stage("Sonarqube Analysis "){
@@ -84,7 +84,7 @@ pipeline{
     always {
         echo 'Slack Notifications'
         slackSend (
-            channel: '#channel name',   #change your channel name
+            channel: '#jenkins',   #change your channel name
             color: COLOR_MAP[currentBuild.currentResult],
             message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} \n build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
         )
