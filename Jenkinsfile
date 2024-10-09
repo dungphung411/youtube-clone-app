@@ -1,82 +1,104 @@
+@Library('Jenkins_shared_library') _
 def COLOR_MAP = [
     'FAILURE' : 'danger',
     'SUCCESS' : 'good'
 ]
 pipeline{
     agent any
+    parameters {
+        choice(name: 'action', choices: 'create\ndelete', description: 'Select create or destroy.')
+        string(name: 'DOCKER_HUB_USERNAME', defaultValue: 'mdngph411', description: 'Docker Hub Username')
+        string(name: 'IMAGE_NAME', defaultValue: 'diutup', description: 'Docker Image Name')
+    }
     tools{
-        jdk 'jdk17'
-        nodejs 'node16'
+        jdk 'jdk21'
+        nodejs 'node18'
     }
     environment {
         SCANNER_HOME=tool 'sonar-scanner'
     }
-    stages {
+    stages{
         stage('clean workspace'){
             steps{
-                cleanWs()
+                cleanWorkspace()
             }
         }
-        stage('Checkout from Git'){
+        stage('checkout from Git'){
             steps{
-              git branch: 'main', changelog: false, poll: false, url: 'https://github.com/dungphung411/youtube-clone-app.git'
+                git branch: 'main', changelog: false, poll: false, url: 'https://github.com/dungphung411/youtube-clone-app.git'
             }
         }
-        stage("Sonarqube Analysis "){
+        stage('sonarqube Analysis'){
+        when { expression { params.action == 'create'}}
             steps{
-                withSonarQubeEnv('sonar-server') {
-                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=youtube \
-                    -Dsonar.projectKey=youtube '''
+                sonarqubeAnalysis()
+            }
+        }
+        stage('sonarqube QualitGate'){
+        when { expression { params.action == 'create'}}
+            steps{
+                script{
+                    def credentialsId = 'sonar-token'
+                    qualityGate(credentialsId)
                 }
             }
         }
-        stage('Install Dependencies') {
-            steps {
-                sh "npm install"
+        stage('Npm'){
+        when { expression { params.action == 'create'}}
+            steps{
+                npmInstall()
+            }
+        }
+        stage('Trivy file scan'){
+        when { expression { params.action == 'create'}}
+            steps{
+                trivyFs()
             }
         }
         stage('OWASP FS SCAN') {
             steps {
                 dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP'
-                dependencyCheckPublisher pattern: '**/dp-report.xml'
+                dependencyCheckPublisher pattern: '**/DP-report.xml'
             }
         }
-        stage('TRIVY FS SCAN') {
-            steps {
-                sh "trivy fs . > trivyfs.txt"
-                sh "trivy fs . > trivyfs.json"
-                sh 'sudo cat trivyfs.txt'
-                sh 'sudo cat trivyfs.json'
-            }
-        }
-        stage("Docker Build & Push"){
+        stage('Docker Build'){
+        when { expression { params.action == 'create'}}
             steps{
                 script{
-                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){
-                       sh "docker build --build-arg REACT_APP_RAPID_API_KEY=f0ead79813ms -t youtube ."
-                       sh "docker tag youtube sevenajay/youtube:latest "
-                       sh "docker push sevenajay/youtube:latest "
-                    }
+                   def dockerHubUsername = params.DOCKER_HUB_USERNAME
+                   def imageName = params.IMAGE_NAME
+                   dockerBuild(dockerHubUsername, imageName)
                 }
             }
         }
-        stage("TRIVY"){
+        stage('Trivy iamge'){
+        when { expression { params.action == 'create'}}
             steps{
-                sh "trivy image sevenajay/youtube:latest > trivyimage.txt"
+                trivyImage()
             }
         }
-        stage('Deploy to container'){
+        stage('Run container'){
+        when { expression { params.action == 'create'}}
             steps{
-                sh 'docker run -d --name youtube1 -p 3000:3000 sevenajay/youtube:latest'
+                runContainer()
             }
         }
-        // stage('Deploy to kubernets'){
+        stage('Remove container'){
+        when { expression { params.action == 'delete'}}
+            steps{
+                removeContainer()
+            }
+        }
+        // stage('Kube deploy'){
+        // when { expression { params.action == 'create'}}
         //     steps{
-        //         script{
-        //             withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
-        //                 sh 'kubectl apply -f deployment.yml'
-        //             }
-        //         }
+        //         kubeDeploy()
+        //     }
+        // }
+        // stage('kube deleter'){
+        // when { expression { params.action == 'delete'}}
+        //     steps{
+        //         kubeDelete()
         //     }
         // }
     }
@@ -84,7 +106,7 @@ pipeline{
     always {
         echo 'Slack Notifications'
         slackSend (
-            channel: '#jenkins',   #change your channel name
+            channel: '#jenkins', 
             color: COLOR_MAP[currentBuild.currentResult],
             message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} \n build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
         )
